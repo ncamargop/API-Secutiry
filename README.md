@@ -1,3 +1,218 @@
+# Tutorial completo de seguridad en NestJS
+https://misovirtual.virtual.uniandes.edu.co/codelabs/MISW4403_202212_Seguridad/index.html#9
+
+## 1. Instalar paquetes:
+``` javascript
+npm install --save @nestjs/passport passport passport-local
+npm install --save-dev @types/passport-local
+npm install --save @nestjs/jwt passport-jwt
+npm install --save-dev @types/passport-jwt
+```
+
+## 2. Crear clase, modulo y servicio de user:
+```javascript
+nest g mo user
+nest g s user
+nest g cl user --no-spec
+```
+
+```javascript
+export class User {
+    id: number;
+    username: string;
+    password: string;
+    roles: string[];
+
+    constructor(id: number, username: string, password: string, roles: string[]) {
+        this.id = id;
+        this.username = username;
+        this.password = password;
+        this.roles = roles;
+    }
+}
+/* archivo: src/user/user.ts */
+```
+
+```javascript
+import { Injectable } from '@nestjs/common';
+import { User } from './user';
+
+@Injectable()
+export class UserService {
+   private users: User[] = [
+       new User(1, "admin", "admin", ["admin"]),
+       new User(2, "user", "admin", ["user"]),
+   ];
+
+   async findOne(username: string): Promise<User | undefined> {
+       return this.users.find(user => user.username === username);
+   }
+}
+/* archivo: src/user/user.service.ts */
+```
+
+
+
+## 3. Crear modulo de auth:
+```
+nest g mo auth
+nest g s auth
+```
+
+Dentro del módulo de autenticación, se importará el módulo de usuarios, que hemos creado anteriormente; adicionalmente se deben importar los módulos PassportModule y JwtModule.
+```javascript
+imports: [
+    UserModule,
+    PassportModule,
+    JwtModule.register({
+      secret: constants.JWT_SECRET,
+      signOptions: { expiresIn: constants.JWT_EXPIRES_IN },
+    })
+  ]
+```
+
+Para definir estas constantes que se utilizarán dentro de la este modulo, se definirá un archivo src/shared/security/constants.ts que exporte estas constantes:
+```javascript
+const jwtConstants = {
+    JWT_SECRET: 'secretKey',
+    JWT_EXPIRES_IN: '2h',
+}
+
+export default jwtConstants;
+/* archivo: src/shared/security/constants.ts */
+```
+
+Finalizar esta parte implementando AuthService y AuthController.
+
+## 4. Implementar estrategias:
+Para definir la estrategia se creará la clase LocalStrategy en la carpeta src/auth/strategies. La implementación de esta estrategia se verá de la siguiente forma:
+```javascript
+import { Strategy } from 'passport-local';
+import { PassportStrategy } from '@nestjs/passport';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { AuthService } from './../auth.service';
+
+@Injectable()
+export class LocalStrategy extends PassportStrategy(Strategy) {
+ constructor(private authService: AuthService) {
+   super();
+ }
+
+ async validate(username: string, password: string): Promise<any> {
+   const user = await this.authService.validateUser(username, password);
+   if (!user) {
+     throw new UnauthorizedException();
+   }
+   return user;
+ }
+}
+/* archivo: src/auth/strategies/local.strategy.ts */
+```
+
+La clase JwtStrategy se implementará carpeta src/auth/strategies. La implementación de esta estrategia se verá de la siguiente forma:
+```javascript
+import { ExtractJwt, Strategy } from 'passport-jwt';
+import { PassportStrategy } from '@nestjs/passport';
+import { Injectable } from '@nestjs/common';
+import constants from '../shared/security/constants';
+
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+    constructor() {
+        super({
+            jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+            ignoreExpiration: false,
+            secretOrKey: constants.JWT_SECRET,
+        });
+    }
+   
+    async validate(payload: any) {
+        return { id: payload.sub, username: payload.username };
+    }
+}
+/* archivo: src/auth/jwt.strategy.ts */
+```
+
+## 5. Implementar guards:
+En la carpeta src/auth/guards crearemos los guardias LocalAuthGuard y JwtAuthGuard. Para esto podemos usar los comandos:
+``` javascript
+nest g gu auth/guards/local-auth --no-spec
+
+nest g gu auth/guards/jwt-auth --no-spec
+```
+
+LocalAuthGuard
+LocalAuthGuard extiende de la clase AuthGuard aplicando la estrategia local.
+```javascript
+import { Injectable } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+
+
+@Injectable()
+export class LocalAuthGuard extends AuthGuard('local') {}
+/* archivo: src/auth/local-auth.guard.ts */
+```
+
+JwtAuthGuard
+JwtAuthGuard extiende de la clase AuthGuard aplicando la estrategia jwt.
+``` javascript
+import { Injectable } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+
+@Injectable()
+export class JwtAuthGuard extends AuthGuard('jwt') {}
+/* archivo: src/auth/jwt-auth.guard.ts */
+```
+
+## 6. Implementamos el metodo login:
+```javascript
+...    
+async login(req: any) {
+        const payload = { name: req.user.username, sub: req.user.id };
+        return {
+            token: this.jwtService.sign(payload, { privateKey: constants.JWT_SECRET }),
+        };
+    }
+...
+/* archivo: src/auth/auth.service.ts */
+```
+
+```javascript
+import { Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { LocalAuthGuard } from '../auth/guards/local-auth.guard';
+import { AuthService } from '../auth/auth.service';
+
+@Controller('users')
+export class UserController {
+
+   constructor(private readonly authService: AuthService){}
+   @UseGuards(LocalAuthGuard)
+   @Post('login')
+   async login(@Req() req) {
+       return this.authService.login(req);
+   }
+}
+/* archivo: src/users/user.controller.ts */
+```
+
+
+# Finalmente usar el JwtAuthGuard como decorador
+Luego de implementado todo lo del tutorial (auth, login, users, guards, etc.) solo debemos agregar el decordador `@UseGuards(JwtAuthGuard)` a la ruta(s) que queremos proteger en el controlador. Por ejemplo:
+
+```javascript
+...
+@UseGuards(JwtAuthGuard)
+@Post()
+@HttpCode(201)
+ async create(@Body() artworkDto: ArtworkDto) {
+   const artwork = plainToInstance(ArtworkEntity, artworkDto);
+   return await this.artworkService.create(artwork);
+ }
+...
+/* archivo: src/artwork/artwork.controller.ts */
+```
+
+# NestJS docs
 <p align="center">
   <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
 </p>
