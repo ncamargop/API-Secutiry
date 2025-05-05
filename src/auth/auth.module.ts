@@ -7,11 +7,12 @@ import constants from '../shared/security/constants';
 import { UserService } from '../user/user.service';
 import { LocalStrategy } from './strategies/local.strategy';
 import { JwtStrategy } from './jwt.strategy';
+import { AuthController } from './auth.controller';
 
 @Module({
   providers: [AuthService, UserService, JwtService, LocalStrategy, JwtStrategy],
   exports: [AuthService],
-  //controllers: [AuthController],
+  controllers: [AuthController],
   imports: [UserModule, PassportModule, JwtModule.register({
     secret: constants.JWT_SECRET,
     signOptions: { expiresIn: constants.JWT_EXPIRES_IN}})]
